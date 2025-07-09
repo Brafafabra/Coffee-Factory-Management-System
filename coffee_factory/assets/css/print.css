@@ -1,0 +1,339 @@
+<?php
+require_once '../../config/db_connect.php';
+require_once '../../includes/auth_check.php';
+
+// Only admin, manager, and clerks can view production reports
+require_any_role(['admin', 'manager', 'clerk']);
+
+// Initialize variables
+$start_date = isset($_GET['start_date']) ? $_GET['start_date'] : date('Y-m-01');
+$end_date = isset($_GET['end_date']) ? $_GET['end_date'] : date('Y-m-t');
+$group_by = isset($_GET['group_by']) ? $_GET['group_by'] : 'day';
+
+// Get production summary
+$sql = "SELECT 
+            COUNT(DISTINCT farmer_id) AS farmers,
+            COUNT(delivery_id) AS deliveries,
+            SUM(weight) AS total_weight
+        FROM deliveries
+        WHERE delivery_date BETWEEN ? AND ?";
+$stmt = $conn->prepare($sql);
+$stmt->bind_param("ss", $start_date, $end_date);
+$stmt->execute();
+$result = $stmt->get_result();
+$production_summary = $result->fetch_assoc();
+$stmt->close();
+
+// Get production by time period
+$date_format = $group_by == 'month' ? '%Y-%m' : '%Y-%m-%d';
+$date_display = $group_by == 'month' ? '%b %Y' : '%e %b %Y';
+
+$sql = "SELECT 
+            DATE_FORMAT(delivery_date, ?) AS period,
+            DATE_FORMAT(delivery_date, ?) AS display_period,
+            COUNT(DISTINCT farmer_id) AS farmers,
+            COUNT(delivery_id) AS deliveries,
+            SUM(weight) AS total_weight
+        FROM deliveries
+        WHERE delivery_date BETWEEN ? AND ?
+        GROUP BY DATE_FORMAT(delivery_date, ?)
+        ORDER BY delivery_date";
+$stmt = $conn->prepare($sql);
+$stmt->bind_param("sssss", $date_format, $date_display, $start_date, $end_date, $date_format);
+$stmt->execute();
+$result = $stmt->get_result();
+$production_by_period = [];
+if ($result->num_rows > 0) {
+    while ($row = $result->fetch_assoc()) {
+        $production_by_period[] = $row;
+    }
+}
+$stmt->close();
+
+// Get production by grade
+$sql = "SELECT 
+            grade,
+            COUNT(delivery_id) AS deliveries,
+            SUM(weight) AS total_weight
+        FROM deliveries
+        WHERE delivery_date BETWEEN ? AND ?
+        GROUP BY grade
+        ORDER BY grade";
+$stmt = $conn->prepare($sql);
+$stmt->bind_param("ss", $start_date, $end_date);
+$stmt->execute();
+$result = $stmt->get_result();
+$production_by_grade = [];
+if ($result->num_rows > 0) {
+    while ($row = $result->fetch_assoc()) {
+        $production_by_grade[] = $row;
+    }
+}
+$stmt->close();
+
+$page_title = "Production Report";
+include '../../includes/header.php';
+?>
+
+<div class="container">
+    <h2>Production Report</h2>
+    
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5>Report Filters</h5>
+        </div>
+        <div class="card-body">
+            <form method="get" class="row g-3">
+                <div class="col-md-3">
+                    <label for="start_date" class="form-label">Start Date</label>
+                    <input type="date" class="form-control" id="start_date" name="start_date" 
+                           value="<?php echo htmlspecialchars($start_date); ?>">
+                </div>
+                <div class="col-md-3">
+                    <label for="end_date" class="form-label">End Date</label>
+                    <input type="date" class="form-control" id="end_date" name="end_date" 
+                           value="<?php echo htmlspecialchars($end_date); ?>">
+                </div>
+                <div class="col-md-3">
+                    <label for="group_by" class="form-label">Group By</label>
+                    <select class="form-select" id="group_by" name="group_by">
+                        <option value="day" <?php if ($group_by == 'day') echo 'selected'; ?>>Day</option>
+                        <option value="month" <?php if ($group_by == 'month') echo 'selected'; ?>>Month</option>
+                    </select>
+                </div>
+                <div class="col-md-3 d-flex align-items-end">
+                    <button type="submit" class="btn btn-primary">Apply</button>
+                </div>
+            </form>
+        </div>
+    </div>
+    
+    <div class="row mb-4">
+        <div class="col-md-12">
+            <div class="card">
+                <div class="card-header">
+                    <h5>Production Summary (<?php echo format_date($start_date); ?> to <?php echo format_date($end_date); ?>)</h5>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-4">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <h6>Farmers</h6>
+                                    <p class="fs-3 mb-0"><?php echo number_format($production_summary['farmers']); ?></p>
+                                </div>
+                                <div class="bg-primary bg-opacity-10 p-3 rounded">
+                                    <i class="bi bi-people text-primary fs-2"></i>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <h6>Deliveries</h6>
+                                    <p class="fs-3 mb-0"><?php echo number_format($production_summary['deliveries']); ?></p>
+                                </div>
+                                <div class="bg-success bg-opacity-10 p-3 rounded">
+                                    <i class="bi bi-truck text-success fs-2"></i>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <h6>Total Weight</h6>
+                                    <p class="fs-3 mb-0"><?php echo number_format($production_summary['total_weight'], 2); ?> kg</p>
+                                </div>
+                                <div class="bg-info bg-opacity-10 p-3 rounded">
+                                    <i class="bi bi-box-seam text-info fs-2"></i>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="row">
+        <div class="col-md-6">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5>Production Over Time</h5>
+                </div>
+                <div class="card-body">
+                    <canvas id="productionChart" height="300"></canvas>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <div class="card mb-4">
+                <div class="card-header">
+                    <h5>Production by Grade</h5>
+                </div>
+                <div class="card-body">
+                    <canvas id="gradeChart" height="300"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="card mb-4">
+        <div class="card-header">
+            <h5>Detailed Production Data</h5>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table">
+                    <thead>
+                        <tr>
+                            <th><?php echo ucfirst($group_by); ?></th>
+                            <th>Farmers</th>
+                            <th>Deliveries</th>
+                            <th>Total Weight (kg)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($production_by_period as $period): ?>
+                            <tr>
+                                <td><?php echo $period['display_period']; ?></td>
+                                <td><?php echo number_format($period['farmers']); ?></td>
+                                <td><?php echo number_format($period['deliveries']); ?></td>
+                                <td><?php echo number_format($period['total_weight'], 2); ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    
+    <div class="d-flex justify-content-end">
+        <button class="btn btn-primary" onclick="window.print()">
+            <i class="bi bi-printer"></i> Print Report
+        </button>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+    // Production over time chart
+    const productionData = {
+        labels: <?php echo json_encode(array_column($production_by_period, 'display_period')); ?>,
+        datasets: [{
+            label: 'Total Weight (kg)',
+            data: <?php echo json_encode(array_column($production_by_period, 'total_weight')); ?>,
+            backgroundColor: 'rgba(78, 115, 223, 0.5)',
+            borderColor: 'rgba(78, 115, 223, 1)',
+            borderWidth: 1,
+            yAxisID: 'y'
+        }, {
+            label: 'Number of Deliveries',
+            data: <?php echo json_encode(array_column($production_by_period, 'deliveries')); ?>,
+            backgroundColor: 'rgba(40, 167, 69, 0.5)',
+            borderColor: 'rgba(40, 167, 69, 1)',
+            borderWidth: 1,
+            type: 'line',
+            yAxisID: 'y1'
+        }]
+    };
+    
+    const productionConfig = {
+        type: 'bar',
+        data: productionData,
+        options: {
+            responsive: true,
+            interaction: {
+                mode: 'index',
+                intersect: false,
+            },
+            scales: {
+                y: {
+                    type: 'linear',
+                    display: true,
+                    position: 'left',
+                    title: {
+                        display: true,
+                        text: 'Weight (kg)'
+                    }
+                },
+                y1: {
+                    type: 'linear',
+                    display: true,
+                    position: 'right',
+                    title: {
+                        display: true,
+                        text: 'Deliveries'
+                    },
+                    grid: {
+                        drawOnChartArea: false,
+                    }
+                }
+            }
+        }
+    };
+    
+    new Chart(
+        document.getElementById('productionChart'),
+        productionConfig
+    );
+    
+    // Production by grade chart
+    const gradeData = {
+        labels: <?php echo json_encode(array_column($production_by_grade, 'grade')); ?>,
+        datasets: [{
+            label: 'Total Weight (kg)',
+            data: <?php echo json_encode(array_column($production_by_grade, 'total_weight')); ?>,
+            backgroundColor: [
+                'rgba(78, 115, 223, 0.5)',
+                'rgba(40, 167, 69, 0.5)',
+                'rgba(255, 193, 7, 0.5)',
+                'rgba(220, 53, 69, 0.5)',
+                'rgba(108, 117, 125, 0.5)',
+                'rgba(23, 162, 184, 0.5)',
+                'rgba(111, 66, 193, 0.5)'
+            ],
+            borderColor: [
+                'rgba(78, 115, 223, 1)',
+                'rgba(40, 167, 69, 1)',
+                'rgba(255, 193, 7, 1)',
+                'rgba(220, 53, 69, 1)',
+                'rgba(108, 117, 125, 1)',
+                'rgba(23, 162, 184, 1)',
+                'rgba(111, 66, 193, 1)'
+            ],
+            borderWidth: 1
+        }]
+    };
+    
+    const gradeConfig = {
+        type: 'pie',
+        data: gradeData,
+        options: {
+            responsive: true,
+            plugins: {
+                legend: {
+                    position: 'right',
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            const label = context.label || '';
+                            const value = context.raw || 0;
+                            const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                            const percentage = Math.round((value / total) * 100);
+                            return `${label}: ${value} kg (${percentage}%)`;
+                        }
+                    }
+                }
+            }
+        }
+    };
+    
+    new Chart(
+        document.getElementById('gradeChart'),
+        gradeConfig
+    );
+</script>
+
+<?php include '../../includes/footer.php'; ?>
